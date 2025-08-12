@@ -11,6 +11,7 @@ import webbrowser
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 from typing import List, Optional, Union, cast
+from fastapi.staticfiles import StaticFiles
 
 import socketio
 from fastapi import (
@@ -208,6 +209,8 @@ asgi_app = socketio.ASGIApp(socketio_server=sio, socketio_path="")
 
 # config.run.root_path is only set when started with --root-path. Not on submounts.
 app.mount(f"{config.run.root_path}/ws/socket.io", asgi_app)
+app.mount("/json-api", StaticFiles(directory=os.path.join(build_dir, "json-api")), name="json-api")
+
 
 app.add_middleware(
     CORSMiddleware,
