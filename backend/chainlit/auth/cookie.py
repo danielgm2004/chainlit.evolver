@@ -8,6 +8,7 @@ from fastapi.security.utils import get_authorization_scheme_param
 from starlette.status import HTTP_401_UNAUTHORIZED
 
 from chainlit.config import config
+from chainlit.logger import logger
 
 """ Module level cookie settings. """
 _cookie_samesite = cast(
@@ -22,7 +23,8 @@ assert _cookie_samesite in [
 ], (
     "Invalid value for CHAINLIT_COOKIE_SAMESITE. Must be one of 'lax', 'strict' or 'none'."
 )
-_cookie_secure = _cookie_samesite == "none"
+# _cookie_secure = _cookie_samesite == "none"
+_cookie_secure = True
 if _cookie_root_path := os.environ.get("CHAINLIT_ROOT_PATH", None):
     _cookie_path = os.environ.get(_cookie_root_path, "/")
 else:
@@ -120,13 +122,34 @@ def set_auth_cookie(request: Request, response: Response, token: str):
     existing_cookies = {
         k for k in request.cookies.keys() if k.startswith(_auth_cookie_name)
     }
+    try:
+        request_path = request.url.path if hasattr(request, "url") else "unknown"
+    except Exception:
+        request_path = "unknown"
+    logger.info(
+        "set_auth_cookie: start path=%s token_len=%d cookie_name=%s cookie_path=%s secure=%s samesite=%s max_age=%s",
+        request_path,
+        len(token),
+        _auth_cookie_name,
+        _cookie_path,
+        _cookie_secure,
+        _cookie_samesite,
+        config.project.user_session_timeout,
+    )
 
     if len(token) > _chunk_size:
         chunks = [token[i : i + _chunk_size] for i in range(0, len(token), _chunk_size)]
+        logger.info(
+            "set_auth_cookie: token requires chunking chunks=%d chunk_size=%d",
+            len(chunks),
+            _chunk_size,
+        )
 
         for i, chunk in enumerate(chunks):
             k = f"{_auth_cookie_name}_{i}"
-
+            logger.debug(
+                "set_auth_cookie: setting chunk cookie key=%s len=%d", k, len(chunk)
+            )
             response.set_cookie(
                 key=k,
                 value=chunk,
@@ -139,6 +162,11 @@ def set_auth_cookie(request: Request, response: Response, token: str):
             existing_cookies.discard(k)
     else:
         # Default (shorter cookies)
+        logger.info(
+            "set_auth_cookie: setting single cookie key=%s len=%d",
+            _auth_cookie_name,
+            len(token),
+        )
         response.set_cookie(
             key=_auth_cookie_name,
             value=token,
@@ -151,7 +179,14 @@ def set_auth_cookie(request: Request, response: Response, token: str):
         existing_cookies.discard(_auth_cookie_name)
 
     # Delete remaining prior cookies/cookie chunks
+    if existing_cookies:
+        logger.info(
+            "set_auth_cookie: deleting stale cookies count=%d keys=%s",
+            len(existing_cookies),
+            list(existing_cookies),
+        )
     for k in existing_cookies:
+        logger.debug("set_auth_cookie: deleting stale cookie key=%s", k)
         response.delete_cookie(
             key=k, path=_cookie_path, secure=_cookie_secure, samesite=_cookie_samesite
         )

@@ -466,28 +466,56 @@ async def _authenticate_user(
     request: Request, user: Optional[User], redirect_to_callback: bool = False
 ) -> Response:
     """Authenticate a user and return the response."""
-
+    logger.info(f"_authenticate_user called with user: {user.identifier if user else None}, redirect_to_callback: {redirect_to_callback}")
+    
     if not user:
+        logger.error("_authenticate_user: No user provided")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="credentialssignin",
+            detail="Invalid credentials",
         )
 
-    # If a data layer is defined, attempt to persist user.
-    if data_layer := get_data_layer():
+    logger.info(f"_authenticate_user: Processing user {user.identifier}")
+    data_layer = get_data_layer()
+
+    if data_layer:
         try:
-            await data_layer.create_user(user)
+            logger.info(f"_authenticate_user: Creating/updating user in data layer for {user.identifier}")
+            persisted_user = await data_layer.create_user(user)
+            if persisted_user:
+                user = persisted_user
+                logger.info(f"_authenticate_user: Successfully persisted user {user.identifier}")
+            else:
+                logger.warning(f"_authenticate_user: Data layer returned None for user {user.identifier}")
         except Exception as e:
-            # Catch and log exceptions during user creation.
             # TODO: Make this catch only specific errors and allow others to propagate.
-            logger.error(f"Error creating user: {e}")
+            logger.error(f"_authenticate_user: Error creating user {user.identifier}: {e}")
 
-    access_token = create_jwt(user)
+    logger.info(f"_authenticate_user: Creating JWT for user {user.identifier}")
+    try:
+        access_token = create_jwt(user)
+        logger.info(f"_authenticate_user: Successfully created JWT for user {user.identifier}")
+    except Exception as e:
+        logger.error(f"_authenticate_user: Failed to create JWT for user {user.identifier}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create authentication token")
 
-    response = _get_auth_response(access_token, redirect_to_callback)
+    logger.info(f"_authenticate_user: Getting auth response for user {user.identifier}")
+    try:
+        response = _get_auth_response(access_token, redirect_to_callback)
+        logger.info(f"_authenticate_user: Successfully created auth response for user {user.identifier}")
+    except Exception as e:
+        logger.error(f"_authenticate_user: Failed to create auth response for user {user.identifier}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create authentication response")
 
-    set_auth_cookie(request, response, access_token)
+    logger.info(f"_authenticate_user: Setting auth cookie for user {user.identifier}")
+    try:
+        set_auth_cookie(request, response, access_token)
+        logger.info(f"_authenticate_user: Successfully set auth cookie for user {user.identifier}")
+    except Exception as e:
+        logger.error(f"_authenticate_user: Failed to set auth cookie for user {user.identifier}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to set authentication cookie")
 
+    logger.info(f"_authenticate_user: Authentication complete for user {user.identifier}")
     return response
 
 
@@ -583,11 +611,15 @@ async def oauth_login(provider_id: str, request: Request):
         )
 
     random = random_secret(32)
+    
+    user_facing_url = get_user_facing_url(request.url)
+    logger.info(f"OAuth login - user_facing_url: {user_facing_url}")
+    logger.info(f"OAuth login - redirect_uri: {user_facing_url}/callback")
 
     params = urllib.parse.urlencode(
         {
             "client_id": provider.client_id,
-            "redirect_uri": f"{get_user_facing_url(request.url)}/callback",
+            "redirect_uri": f"{user_facing_url}/callback",
             "state": random,
             **provider.authorize_params,
         }
@@ -713,7 +745,9 @@ UserParam = Annotated[GenericUser, Depends(get_current_user)]
 
 
 @router.get("/user")
-async def get_user(current_user: UserParam) -> GenericUser:
+async def get_user(request: Request, current_user: UserParam) -> GenericUser:
+    logger.info(f"/user endpoint called - User: {current_user.identifier if current_user else 'None'}")
+    logger.info(f"/user endpoint cookies: {list(request.cookies.keys())}")
     return current_user
 
 

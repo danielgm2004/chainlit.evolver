@@ -1,5 +1,6 @@
 import base64
 import os
+import sys
 import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
@@ -8,6 +9,13 @@ from fastapi import HTTPException
 
 from chainlit.secret import random_secret
 from chainlit.user import User
+
+# Add the project root to sys.path to import aria modules
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from aria.config.secrets import SECRETS
 
 
 class OAuthProvider:
@@ -20,7 +28,14 @@ class OAuthProvider:
     default_prompt: Optional[str] = None
 
     def is_configured(self):
-        return all([os.environ.get(env) for env in self.env])
+        def get_env_value(env_name):
+            # First check SECRETS, then fall back to os.environ
+            secrets_value = getattr(SECRETS, env_name, None)
+            if secrets_value:
+                return secrets_value
+            return os.environ.get(env_name)
+        
+        return all([get_env_value(env) for env in self.env])
 
     async def get_token(self, code: str, url: str) -> str:
         raise NotImplementedError
@@ -167,21 +182,21 @@ class AzureADOAuthProvider(OAuthProvider):
         "OAUTH_AZURE_AD_TENANT_ID",
     ]
     authorize_url = (
-        f"https://login.microsoftonline.com/{os.environ.get('OAUTH_AZURE_AD_TENANT_ID', '')}/oauth2/v2.0/authorize"
+        f"https://login.microsoftonline.com/{SECRETS.OAUTH_AZURE_AD_TENANT_ID or ''}/oauth2/v2.0/authorize"
         if os.environ.get("OAUTH_AZURE_AD_ENABLE_SINGLE_TENANT")
         else "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
     )
     token_url = (
-        f"https://login.microsoftonline.com/{os.environ.get('OAUTH_AZURE_AD_TENANT_ID', '')}/oauth2/v2.0/token"
+        f"https://login.microsoftonline.com/{SECRETS.OAUTH_AZURE_AD_TENANT_ID or ''}/oauth2/v2.0/token"
         if os.environ.get("OAUTH_AZURE_AD_ENABLE_SINGLE_TENANT")
         else "https://login.microsoftonline.com/common/oauth2/v2.0/token"
     )
 
     def __init__(self):
-        self.client_id = os.environ.get("OAUTH_AZURE_AD_CLIENT_ID")
-        self.client_secret = os.environ.get("OAUTH_AZURE_AD_CLIENT_SECRET")
+        self.client_id = SECRETS.OAUTH_AZURE_AD_CLIENT_ID
+        self.client_secret = SECRETS.OAUTH_AZURE_AD_CLIENT_SECRET
         self.authorize_params = {
-            "tenant": os.environ.get("OAUTH_AZURE_AD_TENANT_ID"),
+            "tenant": SECRETS.OAUTH_AZURE_AD_TENANT_ID,
             "response_type": "code",
             "scope": "https://graph.microsoft.com/User.Read offline_access",
             "response_mode": "query",
